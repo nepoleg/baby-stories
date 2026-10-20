@@ -5,14 +5,17 @@ import torch.nn.functional as F
 
 from dataclasses import dataclass
 
+from torch import Tensor
+
+
 @dataclass(frozen=True)
 class GPTConfig:
   vocab_size: int = 89 #calculated from the *-valid file
   context: int = 256
-  n_embd: int = 128
-  n_head: int = 4
-  n_layer: int = 4
-  n_ff_size: int = 512
+  n_embd: int = 256
+  n_head: int = 8
+  n_layer: int = 6
+  n_ff_size: int = 1024
   dropout: float = 0.1
 
   @property
@@ -151,15 +154,19 @@ def main() :
   train(batch_size, config, device, lr_threshold, max_steps, model, tokenizer)
 
   torch.save({"model": model.state_dict(), "config": config, "stoi": tokenizer.stoi},
-             "gpt_tinystories.pt")
+             "gpt_final.pt")
 
   model.eval()
   print(sample(model, tokenizer, device, 500))
 
 
+@torch.no_grad
 def sample(model: GPT, tokenizer: Tokenizer, device: str, length: int) -> str:
+  model.eval()
   start = torch.tensor([tokenizer.encode("\x00")], device=device)
-  return tokenizer.decode(model.generate(start, length)[0].tolist())
+  decode = tokenizer.decode(model.generate(start, length)[0].tolist())
+  model.train()
+  return decode
 
 
 def train(batch_size: int, config: GPTConfig, device: str, lr_threshold: int,
@@ -169,6 +176,7 @@ def train(batch_size: int, config: GPTConfig, device: str, lr_threshold: int,
                                                gamma=0.1)
   model.train()
   t0 = time.perf_counter()
+  last_saved_loss = 10000.0
   for step in range(max_steps):
     xb, yb = tokenizer.get_batch("train", config.context, batch_size, device)
     logits = model(xb)  # [B,T,V]
@@ -179,18 +187,30 @@ def train(batch_size: int, config: GPTConfig, device: str, lr_threshold: int,
     sched.step()
 
     if step % (max_steps // 100) == 0 or step == max_steps - 1:
-      with torch.no_grad():
-        model.eval()
-        xv, yv = tokenizer.get_batch("val", config.context, batch_size, device)
-        logits = model(xv)
-        val_loss = F.cross_entropy(logits.view(-1, tokenizer.vocab_size),
-                                   yv.view(-1))
-        print(
-          f"step {step} [{time.perf_counter() - t0:.0f}s]: Training loss={loss.item()}, validation loss = {val_loss.item()}")
-        if step % (max_steps // 10) == 0:
-          print(sample(model, tokenizer, device, 200))
-        model.train()
+      val_loss = calc_val_loss(batch_size, config, device, model, tokenizer)
+      print(f"step {step} [{time.perf_counter() - t0:.0f}s]: Training loss={loss.item()}, validation loss = {val_loss}")
+      if val_loss < last_saved_loss :
+        last_saved_loss = val_loss
+        start = time.perf_counter()
+        torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+                    "sched": sched.state_dict(), "step": step,
+                    "config": config, "stoi": tokenizer.stoi}, "best.pt")
+        took = time.perf_counter() - start
+        print(f"Saved best in {took*1000:.0f} ms. Loss = {val_loss}")
+      if step % (max_steps // 10) == 0:
+        print(sample(model, tokenizer, device, 200))
 
+@torch.no_grad
+def calc_val_loss(batch_size: int, config: GPTConfig, device: str, model: GPT,
+    tokenizer: Tokenizer, n=20) -> float:
+  model.eval()
+  losses = []
+  for _ in range(n):
+    xv, yv = tokenizer.get_batch("val", config.context, batch_size, device)
+    logits = model(xv)
+    losses.append(F.cross_entropy(logits.view(-1, tokenizer.vocab_size), yv.view(-1)).item())
+  model.train()
+  return sum(losses) / n
 
 if __name__ == "__main__":
   main()
