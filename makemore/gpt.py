@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,6 +30,7 @@ class GPT(nn.Module):
     self.linear = nn.Linear(config.n_embd, config.vocab_size)
     self.register_buffer("pos_idx", torch.tensor([i for i in range(config.context)]))
     self.norm = nn.LayerNorm(config.n_embd)
+    self.config = config
 
   def forward(self, x): #[B, T]
     B, T = x.shape
@@ -37,6 +39,16 @@ class GPT(nn.Module):
     x_res = encoded + pos
     layered = self.norm(self.layers(x_res))
     return self.linear(layered)
+
+  @torch.no_grad()
+  def generate(self, idx, max_new_tokens, stop=None): #idx [B, T]
+    for _ in range(max_new_tokens):
+      logits = self(idx[:, -self.config.context:])
+      probs = F.softmax(logits[:, -1, :], -1) #[B, V]
+      idx = torch.cat([idx, torch.multinomial(probs, 1)], 1)
+      if stop is not None and (idx[:, -1] == stop).all():
+        break
+    return idx
 
 
 class Layer(nn.Module):
@@ -62,8 +74,6 @@ class FeedForward(nn.Module):
 
   def forward(self, x):
     return self.l2(self.relu(self.l1(x)))
-
-
 
 class MultiHeadAttention(nn.Module):
   def __init__(self, config: GPTConfig):
@@ -143,12 +153,22 @@ def main() :
   torch.save({"model": model.state_dict(), "config": config, "stoi": tokenizer.stoi},
              "gpt_tinystories.pt")
 
+  model.eval()
+  print(sample(model, tokenizer, device, 500))
+
+
+def sample(model: GPT, tokenizer: Tokenizer, device: str, length: int) -> str:
+  start = torch.tensor([tokenizer.encode("\x00")], device=device)
+  return tokenizer.decode(model.generate(start, length)[0].tolist())
+
 
 def train(batch_size: int, config: GPTConfig, device: str, lr_threshold: int,
     max_steps: int, model: GPT, tokenizer: Tokenizer):
   opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
   sched = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[lr_threshold],
                                                gamma=0.1)
+  model.train()
+  t0 = time.perf_counter()
   for step in range(max_steps):
     xb, yb = tokenizer.get_batch("train", config.context, batch_size, device)
     logits = model(xb)  # [B,T,V]
@@ -166,11 +186,11 @@ def train(batch_size: int, config: GPTConfig, device: str, lr_threshold: int,
         val_loss = F.cross_entropy(logits.view(-1, tokenizer.vocab_size),
                                    yv.view(-1))
         print(
-          f"step {step}: Training loss={loss.item()}, validation loss = {val_loss.item()}")
+          f"step {step} [{time.perf_counter() - t0:.0f}s]: Training loss={loss.item()}, validation loss = {val_loss.item()}")
+        if step % (max_steps // 10) == 0:
+          print(sample(model, tokenizer, device, 200))
         model.train()
 
 
 if __name__ == "__main__":
   main()
-
-
