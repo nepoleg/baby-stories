@@ -44,10 +44,10 @@ class GPT(nn.Module):
     return self.linear(layered)
 
   @torch.no_grad()
-  def generate(self, idx, max_new_tokens, stop=None): #idx [B, T]
+  def generate(self, idx, max_new_tokens, stop=None, temperature = 1.0): #idx [B, T]
     for _ in range(max_new_tokens):
       logits = self(idx[:, -self.config.context:])
-      probs = F.softmax(logits[:, -1, :], -1) #[B, V]
+      probs = F.softmax(logits[:, -1, :] / temperature, -1) #[B, V]
       idx = torch.cat([idx, torch.multinomial(probs, 1)], 1)
       if stop is not None and (idx[:, -1] == stop).all():
         break
@@ -115,17 +115,29 @@ class Tokenizer:
   train_data: torch.Tensor
   val_data: torch.Tensor
 
-  def __init__(self, filepath: str):
-    data = open(filepath, encoding="utf-8").read().replace("<|endoftext|>", '\x00')
-    vocab = sorted(set(ltr for ltr in data))
+  def __init__(self, train_path: str, val_path: str, max_chars: int):
+    val_text = self.read(val_path, -1)
+    vocab = sorted(set(val_text))
+    allowed = set(vocab)
+    train_text = "\x00".join(s for s in self.read(train_path, max_chars).split("\x00")
+                             if set(s) <= allowed)
+    assert len(vocab) <= 256, f"vocab of {len(vocab)} chars does not fit uint8"
     self.vocab_size = len(vocab)
 
     self.stoi = {s: i for i, s in enumerate(vocab)}
     self.itos = {i: s for s, i in self.stoi.items()}
 
-    data = torch.tensor(self.encode(data))
-    n = int(len(data) * 0.9)
-    self.train_data, self.val_data = data[:n], data [n:]
+    self.train_data = self.encode_tensor(train_text)
+    self.val_data = self.encode_tensor(val_text)
+
+  @staticmethod
+  def read(path: str, max_chars: int) -> str:
+    with open(path, encoding="utf-8") as f:
+      return f.read(max_chars).replace("<|endoftext|>", '\x00')
+
+  def encode_tensor(self, text: str, chunk: int = 10_000_000) -> Tensor:
+    return torch.cat([torch.tensor(self.encode(text[i:i + chunk]), dtype=torch.uint8)
+                      for i in range(0, len(text), chunk)])
 
   def encode(self, data: str):
     return [self.stoi[ch] for ch in data]
@@ -138,20 +150,24 @@ class Tokenizer:
     ix = torch.randint(0, len(d) - context_size - 1, (batch_size, ))
     x = torch.stack([d[start:start+context_size] for start in ix])
     y = torch.stack([d[start+1:start+context_size+1] for start in ix])
-    return x.to(device), y.to(device)
+    return x.to(device).long(), y.to(device).long()
 
 def main() :
   device = "cuda" if torch.cuda.is_available() else "cpu"
   print(f"Using device {device}")
-  max_steps = 20_000
+  max_steps = 100_000
   batch_size = 64
-  lr_threshold = int(max_steps * 0.7)
 
-  tokenizer = Tokenizer("C:\\dev\\tutorials\\LLM2\\gpt\\makemore\\data\\TinyStoriesV2-GPT4-valid.txt")
+  t = time.perf_counter()
+  tokenizer = Tokenizer("C:\\dev\\tutorials\\LLM2\\gpt\\makemore\\data\\TinyStoriesV2-GPT4-train.txt",
+                        "C:\\dev\\tutorials\\LLM2\\gpt\\makemore\\data\\TinyStoriesV2-GPT4-valid.txt",
+                        max_chars=1_000_000_000)
+  print(f"Loaded {len(tokenizer.train_data):,} train / {len(tokenizer.val_data):,} val chars, "
+        f"vocab {tokenizer.vocab_size} in {time.perf_counter() - t:.0f}s")
   config = GPTConfig(vocab_size=tokenizer.vocab_size)
   model = GPT(config).to(device)
 
-  train(batch_size, config, device, lr_threshold, max_steps, model, tokenizer)
+  train(batch_size, config, device, max_steps, model, tokenizer)
 
   torch.save({"model": model.state_dict(), "config": config, "stoi": tokenizer.stoi},
              "gpt_final.pt")
@@ -169,11 +185,13 @@ def sample(model: GPT, tokenizer: Tokenizer, device: str, length: int) -> str:
   return decode
 
 
-def train(batch_size: int, config: GPTConfig, device: str, lr_threshold: int,
-    max_steps: int, model: GPT, tokenizer: Tokenizer):
+def train(batch_size: int, config: GPTConfig, device: str, max_steps: int,
+    model: GPT, tokenizer: Tokenizer, warmup: int = 1000):
   opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
-  sched = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[lr_threshold],
-                                               gamma=0.1)
+  sched = torch.optim.lr_scheduler.SequentialLR(opt, [
+    torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.01, total_iters=warmup),
+    torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps - warmup, eta_min=1e-4),
+  ], milestones=[warmup])
   model.train()
   t0 = time.perf_counter()
   last_saved_loss = 10000.0
@@ -188,7 +206,7 @@ def train(batch_size: int, config: GPTConfig, device: str, lr_threshold: int,
 
     if step % (max_steps // 100) == 0 or step == max_steps - 1:
       val_loss = calc_val_loss(batch_size, config, device, model, tokenizer)
-      print(f"step {step} [{time.perf_counter() - t0:.0f}s]: Training loss={loss.item()}, validation loss = {val_loss}")
+      print(f"step {step} [{time.perf_counter() - t0:.0f}s] lr={sched.get_last_lr()[0]:.2e}: Training loss={loss.item()}, validation loss = {val_loss}")
       if val_loss < last_saved_loss :
         last_saved_loss = val_loss
         start = time.perf_counter()
