@@ -44,11 +44,20 @@ class GPT(nn.Module):
     return self.linear(layered)
 
   @torch.no_grad()
-  def generate(self, idx, max_new_tokens, stop=None, temperature = 1.0): #idx [B, T]
+  def generate(self, idx, max_new_tokens, stop=None, temperature = 1.0, top_k = 0, top_p = 0.0): #idx [B, T]
+    assert idx.shape[0] == 1 #only uses non-batched 0 dimension.
     for _ in range(max_new_tokens):
-      logits = self(idx[:, -self.config.context:])
-      probs = F.softmax(logits[:, -1, :] / temperature, -1) #[B, V]
-      idx = torch.cat([idx, torch.multinomial(probs, 1)], 1)
+      logits: torch.Tensor = self(idx[:, -self.config.context:])[0, -1] # [V]
+      if top_k > 0:
+        low_k = logits.sort(dim=-1, descending=True).indices[top_k:]
+        logits[low_k] = -torch.inf
+      elif top_p > 0.0:
+        srt = (logits  / temperature).softmax(0).sort(dim=-1, descending=True)
+        running_sum = srt.values.cumsum(0) - srt.values
+        logits[srt.indices[running_sum > top_p]] = -torch.inf
+
+      probs  = F.softmax(logits / temperature, -1)
+      idx = torch.cat([idx, torch.multinomial(probs, 1).unsqueeze(0)], 1)
       if stop is not None and (idx[:, -1] == stop).all():
         break
     return idx

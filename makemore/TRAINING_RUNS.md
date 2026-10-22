@@ -1,7 +1,15 @@
 # Char-level GPT on TinyStories: training runs
 
 All runs: char-level tokens, pre-LN transformer, AdamW, final LayerNorm, no dropout.
-Loss is cross-entropy per **char** (nats). Samples drawn at temperature 1.0.
+Loss is cross-entropy per **char** (nats). Samples drawn at temperature 1.0 unless noted.
+
+## Best story so far
+
+Run 4 `best.pt`, temperature 0.8, top_p 0.7:
+
+> Once upon a time, there was a big tree with many leaves. A little boy named Tim loved to play near the tree. He would swing high up in the sky and feel the wind on his face.
+> One day, Tim saw a small bird stuck in the tree. The bird was sad and scared. Tim wanted to help the bird, so he used his strong legs to reach the bird. The bird was happy and said, "Thank you, Tim!"
+> Tim felt good for helping the bird. He shared his leaves with the bird. They became good friends and played together every day. Tim learned that helping others can make you feel happy too.
 
 ## Summary
 
@@ -131,9 +139,50 @@ Generated with `run_gpt.py` until end-of-text. Every story ends on its own, with
 > As they played, Lily saw a small, shiny rock. She wanted to pick it up, but her mom said no. Lily was sad and angry. She thought her mom would not like it. So, she picked up the rock and took it home.
 > When Lily got home, her mom saw the rock and said, "Lily, you should not pick up things that are not yours. You should ask for help when you are sad." Lily listened to her mom and went back to playing with her ball. She was happy and played with her ball all day.
 
+### Run 4 `best.pt`: top-k and top-p sampling
+
+Temperature is applied before the top-k / top-p cut. Two stories per setting, so the comparison is a strong hint, not a measurement.
+
+| Temperature | Sampling | Result |
+|---|---|---|
+| 1.0 | top_k 5 / 10 | barely helps; k=10 still invents words ("Spare mention something you can toke") |
+| 1.0 | top_p 0.9 | coherent, odd details |
+| 1.0 | top_p 0.7 | coherent, varied |
+| 0.8 | top_k 5 / 10 | fluent, odd logic ("ate their caves") |
+| 0.8 | top_p 0.9 | coherent, leans on the stock "something unexpected happened… started to talk!" plot |
+| 0.8 | **top_p 0.7** | **best**: clean arc, fitting moral (see "Best story so far") |
+| 0.6 | top_p 0.7 / 0.9 | worse: repetitive loops, close to greedy |
+
+Findings:
+- Top-p beats top-k at char level. The number of plausible chars changes a lot by position (few inside a word, many at a word start), so a fixed k is too loose in one place and too strict in another.
+- Top-p replaces a low temperature; it does not combine with one. T=0.6 + top-p sharpens the distribution twice and the text degenerates into loops (Holtzman et al., 2019).
+- Remaining errors are logic, not words. Decoding can't fix those; only a better model can.
+- Default for now: **T = 0.8–1.0, top_p = 0.7–0.8**.
+
+**T = 1.0, top_k 10** (invented words):
+
+> The biggest shape then said, "Spare mention something you can toke anything from the zoo." Suddenly, she began to take an eye.
+
+**T = 1.0, top_p 0.7:**
+
+> Once upon a time, there was a sleepy cat named Tom. Tom liked to take a nap in the park. He would sleep all day long. One day, Tom found a shiny coin on the ground. He was very happy.
+> Tom wanted to show his friend, a dog named Max. Tom ran to Max's house with the coin. Max was very sleepy and called Tom. Tom said, "Max, let's play a game!" Max wagged his tail and they played the game. They took turns sleeping and had a lot of fun.
+> After a while, Tom and Max got tired. They decided to take a nap. When they woke up, they were both very happy. They said goodbye to each other and went to sleep. Tom and Max had a great day at the park.
+
+**T = 0.8, top_p 0.9:**
+
+> One day, a boy named Tim found a big box of toys. He wanted to see what was inside. He tried to open the box, but it was very hard. He pushed and pulled, but the box would not open. Tim was sad.
+> Then, a friendly bird flew down and said, "I can help you open the box!" The bird flew around and pushed Tim out of the box. The bird said, "Thank you, Tim! You are very kind." Tim was happy to help. He pushed the box to the tree and went back to play.
+> As they played, something unexpected happened. A little bug came out of the box! The bug said, "I live in this box and we can play together!" Tim and the bird were surprised. They all played together and had a fun day.
+
+**T = 0.6, top_p 0.9** (degenerate loop):
+
+> Once upon a time, there was a big boat. The boat had a long tail. The tail was far away. The boat lived in a harbor. The harbor was in a distant place.
+> One day, the boat saw a big boat. The boat wanted to sail on the water. The boat sailed on the water. The boat was happy.
+> The boat saw a little fish. The fish sailed on the boat. The boat was happy. The boat sailed on the water. The fish sailed on the water. The boat was not sad anymore.
+
 ## Ideas not tried yet
 
-- Top-k / top-p sampling
 - Story-aligned windows (start each window at a story start) + keep only stories ≤ 1024 chars (88% of stories, 78% of chars)
 - BPE tokenizer (~4× more story per context, no spelling to learn)
 - Bigger model, best combined with BPE
