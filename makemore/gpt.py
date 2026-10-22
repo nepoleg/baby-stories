@@ -11,10 +11,10 @@ from torch import Tensor
 @dataclass(frozen=True)
 class GPTConfig:
   vocab_size: int = 89 #calculated from the *-valid file
-  context: int = 256
-  n_embd: int = 256
+  context: int = 1024
+  n_embd: int = 384
   n_head: int = 8
-  n_layer: int = 6
+  n_layer: int = 8
   n_ff_size: int = 1024
   dropout: float = 0.1
 
@@ -81,34 +81,20 @@ class FeedForward(nn.Module):
 class MultiHeadAttention(nn.Module):
   def __init__(self, config: GPTConfig):
     super().__init__()
-    self.heads = nn.ModuleList([Head(config) for _ in range(config.n_head)])
+    self.config = config
+    self.w_q = nn.Linear(config.n_embd, config.head_size * config.n_head, bias=False)
+    self.w_k = nn.Linear(config.n_embd, config.head_size * config.n_head, bias=False)
+    self.w_v = nn.Linear(config.n_embd, config.head_size * config.n_head, bias=False)
     self.linear = nn.Linear(config.n_embd, config.n_embd, bias=False)
 
   def forward(self, x):
-    cat = torch.cat([head(x) for head in self.heads], -1)
-    return self.linear(cat)
-
-
-class Head(nn.Module):
-  tril: torch.Tensor
-  def __init__(self, config: GPTConfig):
-    super().__init__()
-    self.head_size = config.head_size
-    self.w_q = nn.Linear(config.n_embd, config.head_size, bias=False)
-    self.w_k = nn.Linear(config.n_embd, config.head_size, bias=False)
-    self.w_v = nn.Linear(config.n_embd, config.head_size, bias=False)
-    self.register_buffer("tril", torch.ones([config.context, config.context]).tril())
-
-  def forward(self, x) : # x [B, T, n_embed]
     B, T, C = x.shape
-    q: torch.Tensor = self.w_q(x) #[B, T, head_size]
-    k: torch.Tensor = self.w_k(x) #[B, T, head_size]
-    v: torch.Tensor = self.w_v(x) #[B, T, head_size]
-    wei = q @ k.transpose(1, 2) / self.head_size ** 0.5 # [B, T, T]
-    masked = wei.masked_fill(self.tril[:T, :T] == 0, -torch.inf)
-    soft = F.softmax(masked, -1)
-    out =  soft @ v # [B, T, head_size]
-    return out
+    q: torch.Tensor = self.w_q(x).view(B, T, self.config.n_head, self.config.head_size).transpose(1,2) #[B, n_heads, T, head_size]
+    k: torch.Tensor = self.w_k(x).view(B, T, self.config.n_head, self.config.head_size).transpose(1,2) #[B, n_heads, T, head_size]
+    v: torch.Tensor = self.w_v(x).view(B, T, self.config.n_head, self.config.head_size).transpose(1,2) #[B, n_heads, T, head_size]
+    attn = F.scaled_dot_product_attention(q,k,v, is_causal=True) #[B, n_heads, T, head_size]
+    attn = attn.transpose(1, 2).contiguous().view(B, T, self.config.n_embd) #[B, T, head_size * n_heads]
+    return self.linear(attn)
 
 
 class Tokenizer:
@@ -155,8 +141,9 @@ class Tokenizer:
 def main() :
   device = "cuda" if torch.cuda.is_available() else "cpu"
   print(f"Using device {device}")
+
   max_steps = 100_000
-  batch_size = 64
+  batch_size = 16
 
   t = time.perf_counter()
   tokenizer = Tokenizer("C:\\dev\\tutorials\\LLM2\\gpt\\makemore\\data\\TinyStoriesV2-GPT4-train.txt",
@@ -165,6 +152,7 @@ def main() :
   print(f"Loaded {len(tokenizer.train_data):,} train / {len(tokenizer.val_data):,} val chars, "
         f"vocab {tokenizer.vocab_size} in {time.perf_counter() - t:.0f}s")
   config = GPTConfig(vocab_size=tokenizer.vocab_size)
+  print(f"{config=}")
   model = GPT(config).to(device)
 
   train(batch_size, config, device, max_steps, model, tokenizer)
