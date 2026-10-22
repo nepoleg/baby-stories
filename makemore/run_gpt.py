@@ -8,7 +8,7 @@ def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("prompt", nargs="?", default="")
   parser.add_argument("-n", "--max-length", type=int, default=5000)
-  parser.add_argument("-c", "--checkpoint", default=os.path.join(os.path.dirname(__file__), "gpt_final.pt"))
+  parser.add_argument("-c", "--checkpoint", default=os.path.join(os.path.dirname(__file__), "best.pt"))
   args = parser.parse_args()
 
   device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -21,10 +21,10 @@ def main():
   model.load_state_dict(ckpt["model"])
   model.eval()
   temperature = 1.0
-  for _ in range(4) :
-    for _ in range(3):
+  for _ in range(5) :
+    for _ in range(2):
       eot = stoi["\x00"]
-      print(f"{temperature=}")
+      print(f"{temperature:.1f}")
       start = torch.tensor([[eot] + [stoi[ch] for ch in args.prompt]], device=device)
       out = model.generate(start, args.max_length, stop=eot, temperature = temperature)[0].tolist()
       print("".join(itos[i] for i in out[1:]).rstrip("\x00"))
