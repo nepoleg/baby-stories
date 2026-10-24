@@ -12,9 +12,9 @@ class GPTConfig:
   vocab_size: int = 89 #calculated from the *-valid file
   context: int = 512
   n_embd: int = 384
-  n_head: int = 4
+  n_head: int = 6
   n_layer: int = 8
-  n_ff_size: int = 1024
+  n_ff_size: int = 1536
   dropout: float = 0.1
 
   @property

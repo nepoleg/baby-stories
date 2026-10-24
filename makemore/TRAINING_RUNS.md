@@ -2,12 +2,20 @@
 
 All runs: pre-LN transformer, AdamW, final LayerNorm, no dropout.
 Runs 1–4 use char-level tokens; loss is cross-entropy per **char** (nats).
-Run 5 uses a byte-level BPE tokenizer; loss is per **token**, about 4.14 chars each.
+Runs 5–6 use a byte-level BPE tokenizer; loss is per **token**, about 4.14 chars each.
 Samples drawn at temperature 1.0 unless noted.
 
 ## Best story so far
 
-Run 5 (BPE), training sample at step 99,999, temperature 1.0, no top-k/top-p:
+Run 6 `best.pt`, temperature 0.8, top_k 10:
+
+> Once upon a time, there was a little boy named Tim. Tim had a big, rough toy that he loved a lot. It was a small, red car with a funny texture. Tim played with his toy all day and took his car everywhere he went.
+> One day, Tim met a new friend named Sam. Sam had an opinion about his toy car. Sam said they should share their toys. But Tim did not want to share his car. They both wanted to play with the car and the bumpy ball.
+> Tim and Sam started to disagree with each other. They both wanted to play with the car, but neither wanted to share. Finally, they decided to share and take turns. Tim's rough toy car was now very special and they both had a fun day playing together.
+
+A real conflict (both want the car), resolved logically (taking turns), characters consistent throughout. Small slips: "big, rough toy… small, red car", a "bumpy ball" from nowhere.
+
+Run 5 best, training sample at step 99,999, temperature 1.0, no top-k/top-p:
 
 > Once upon a time, there was a little girl named Lucy. She loved to balance on one leg. One day, Lucy felt troubled because she could not balance well. Her mommy told her, "Don't worry, sweetie. You will try to find a good way to balance."
 > Lucy went to a small hole in the fence. At the hole, she found a beautiful veil. The veil was red and sparkled in the sun. Lucy was very happy. She put the veil on her shoulder and started to balance. "Wow, perfect!" she said.
@@ -30,6 +38,7 @@ Best char-level story, run 4 `best.pt`, temperature 0.8, top_p 0.7:
 | 3 | 5.0M | 6 × 256 × 8 | 1024 | 16 | train file, first 1B chars | — | started, then stopped (no results) | — |
 | 4 | 11.5M | 8 × 384 × 8 | 1024 | 16 | train file, first 1B chars, filtered | 100k | **~0.40** (step 95k, from memory); final ~0.42 | ~10 h (~0.36 s/step) |
 | 5 | 9.0M | 8 × 256 × 4, BPE 10k, tied | 512 tokens | 16 | full train file, 539M tokens | 100k | **1.405 / token ≈ 0.34 / char** (step 89k); final 1.43 | 7.0 h (~0.25 s/step) |
+| 6 | 18.2M | 8 × 384 × 6, BPE 10k, tied | 512 tokens | 32 | full train file, 539M tokens | 100k | **1.340 / token ≈ 0.324 / char** (step 93k); final 1.37 | 12.5 h (~0.45 s/step) |
 
 ## Run 1: small model, valid file only
 
@@ -78,7 +87,7 @@ Sample (step 90k):
 - LR: warmup 1000 steps to 1e-3, cosine to 1e-4
 - ~1.6 epochs; train ≈ val, no overfitting
 - Val loss: 0.434 (59k) → 0.427 (67k) → 0.425 (76k) → 0.417 (82k) → ~0.40 at 95k (best, from memory; console output lost), final ~0.42
-- Checkpoints: `best.pt` (step 95k), `gpt_final.pt` (step 100k); both overwritten by run 5
+- Checkpoint: `best.pt` (step 95k), in git at `1e9cf44`
 - Observation: grammar and spelling nearly clean; logic still weak ("Jack saw Jack smiling", a lollipop on a tree)
 
 Samples:
@@ -202,7 +211,7 @@ Findings:
 - Val loss: 4.65 (1k) → 2.28 (10k) → 1.81 (20k) → 1.64 (30k) → 1.56 (40k) → 1.51 (50k) → 1.47 (60k) → 1.45 (70k) → 1.43 (80k) → **1.405 (89k, best)** → 1.43 (100k)
 - Plateau from ~75k; train ≈ val throughout (capacity-limited, no overfitting)
 - vs run 4: **~15% lower loss per char** (0.34 vs 0.40) with fewer params and a smaller transformer (6.3M vs 11M)
-- Checkpoints: `best.pt` (step 89k), `gpt_final.pt` (step 100k)
+- Checkpoint: `best.pt` (step 89k), in git at `4372c9c`
 - Observation: grammar clean; errors are logic and entity mix-ups ("the ball wanted to play with the ball", Sue speaking as the cactus), plus repetition ("forgive and forgive")
 
 Sample (step 99,999):
@@ -213,8 +222,38 @@ Sample (step 99,999):
 
 Sampling (two stories per setting): T 0.8 with top_p 0.7–0.9 gave the most coherent stories; top_k 5 at T 1.0 looped the most ("They hope… They hope…").
 
+## Run 6: wider BPE model, 18.2M params
+
+- Config: `vocab 10000, context 512, n_embd 384, n_head 6, n_layer 8, n_ff 1536` (~18.2M params: 14.2M transformer, 3.84M tied embedding, 0.2M position; matches `gpt_final.pt` size)
+- Batch 32 (run 5: 16), so 16k tokens per step; 1.64B tokens total ≈ 3.0 epochs
+- Same tokenizer, data, weight tying and LR schedule as run 5
+- Val loss: 2.13 (10k) → 1.74 (20k) → 1.60 (30k) → 1.51 (40k) → 1.45 (50k) → 1.42 (60k) → 1.37 (70k) → 1.36 (80k) → **1.340 (93k, best)** → 1.37 (100k)
+- Averages over 10 evals (val noise ±0.02): 70–79k ~1.380, 80–89k ~1.369, 90–100k ~1.359. Plateau; continuing would gain ~0.01–0.03
+- Train ≈ val throughout, even at 3 epochs: still capacity-limited
+- vs run 5: −0.065 per token (−0.016 per char) for 2× params
+- Checkpoint: `best.pt` (step 93k)
+
+### Run 6 `best.pt`: sampling
+
+Two stories per setting, via `run_gpt.py`.
+
+| Temperature | Sampling | Result |
+|---|---|---|
+| 1.0 | top_k 5 / 10 | coherent; k=10 mixes up characters (cars named Tim, "a big hand caught in a tree") |
+| 1.0 | top_p 0.9 | coherent, imaginative (a magic zipper that grants a wish) |
+| 1.0 | top_p 0.7 | coherent, leans on the stock "the tree began to talk!" twist |
+| 0.8 | top_k 5 | clean; endings flip logic (Spot "glad he could help his friend" who helped him) |
+| 0.8 | **top_k 10** | **best**: real conflict and resolution (see "Best story so far") |
+| 0.8 | top_p 0.9 | good tension (Mandy and the raft), weak ending: disobeying gets rewarded |
+| 0.8 | top_p 0.7 | worse: loops ("Tim was happy. He played with the rock every day" twice) |
+
+Findings:
+- Top-k works with BPE. At char level it produced invented words; with BPE every token is a real word piece, so k=5–10 gives clean text. The run 4 finding "top-p beats top-k" does not carry over.
+- T 0.8 + top_p 0.7, the best char-level setting, is too strict for BPE and loops. Default now: **T 0.8, top_k 10 or top_p 0.9**.
+- Most common error: endings that contradict the story (thanking Mom "for helping me catch the bug" after it flew away).
+
 ## Ideas not tried yet
 
 - Story-aligned windows (start each window at a story start) + keep only stories ≤ 1024 chars (88% of stories, 78% of chars)
-- Wider BPE model: `n_embd 384, n_head 6, n_ff 1536` (run 5 is capacity-limited)
-- Shorter run or higher LR floor: run 5 gained little after step ~75k
+- Deeper BPE model: `n_layer 12` at n_embd 384 (~25M params); depth may help coherence more than width
+- Shorter run or higher LR floor: runs 5 and 6 gained little after step ~75k
