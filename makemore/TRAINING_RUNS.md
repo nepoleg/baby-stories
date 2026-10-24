@@ -1,11 +1,21 @@
-# Char-level GPT on TinyStories: training runs
+# GPT on TinyStories: training runs
 
-All runs: char-level tokens, pre-LN transformer, AdamW, final LayerNorm, no dropout.
-Loss is cross-entropy per **char** (nats). Samples drawn at temperature 1.0 unless noted.
+All runs: pre-LN transformer, AdamW, final LayerNorm, no dropout.
+Runs 1–4 use char-level tokens; loss is cross-entropy per **char** (nats).
+Run 5 uses a byte-level BPE tokenizer; loss is per **token**, about 4.14 chars each.
+Samples drawn at temperature 1.0 unless noted.
 
 ## Best story so far
 
-Run 4 `best.pt`, temperature 0.8, top_p 0.7:
+Run 5 (BPE), training sample at step 99,999, temperature 1.0, no top-k/top-p:
+
+> Once upon a time, there was a little girl named Lucy. She loved to balance on one leg. One day, Lucy felt troubled because she could not balance well. Her mommy told her, "Don't worry, sweetie. You will try to find a good way to balance."
+> Lucy went to a small hole in the fence. At the hole, she found a beautiful veil. The veil was red and sparkled in the sun. Lucy was very happy. She put the veil on her shoulder and started to balance. "Wow, perfect!" she said.
+> Emma felt proud of herself. She ran around the village, looking for the prettiest things around her. All her friends also wanted to play with Lucy. They all ran around, jumped, and laughed. Lucy was not troubled anymore. She made everyone happy with her beautiful veil.
+
+Problem → found object → solution → happy end. One slip: "Emma" instead of Lucy.
+
+Best char-level story, run 4 `best.pt`, temperature 0.8, top_p 0.7:
 
 > Once upon a time, there was a big tree with many leaves. A little boy named Tim loved to play near the tree. He would swing high up in the sky and feel the wind on his face.
 > One day, Tim saw a small bird stuck in the tree. The bird was sad and scared. Tim wanted to help the bird, so he used his strong legs to reach the bird. The bird was happy and said, "Thank you, Tim!"
@@ -19,6 +29,7 @@ Run 4 `best.pt`, temperature 0.8, top_p 0.7:
 | 2 | 4.9M | 6 × 256 × 8 | 256 | 64 | train file, first 1B chars | 100k | **0.501** (step 97k) | 8.2 h |
 | 3 | 5.0M | 6 × 256 × 8 | 1024 | 16 | train file, first 1B chars | — | started, then stopped (no results) | — |
 | 4 | 11.5M | 8 × 384 × 8 | 1024 | 16 | train file, first 1B chars, filtered | 100k | **~0.40** (step 95k, from memory); final ~0.42 | ~10 h (~0.36 s/step) |
+| 5 | 9.0M | 8 × 256 × 4, BPE 10k, tied | 512 tokens | 16 | full train file, 539M tokens | 100k | **1.405 / token ≈ 0.34 / char** (step 89k); final 1.43 | 7.0 h (~0.25 s/step) |
 
 ## Run 1: small model, valid file only
 
@@ -67,7 +78,7 @@ Sample (step 90k):
 - LR: warmup 1000 steps to 1e-3, cosine to 1e-4
 - ~1.6 epochs; train ≈ val, no overfitting
 - Val loss: 0.434 (59k) → 0.427 (67k) → 0.425 (76k) → 0.417 (82k) → ~0.40 at 95k (best, from memory; console output lost), final ~0.42
-- Checkpoints: `best.pt` (step 95k), `gpt_final.pt` (step 100k)
+- Checkpoints: `best.pt` (step 95k), `gpt_final.pt` (step 100k); both overwritten by run 5
 - Observation: grammar and spelling nearly clean; logic still weak ("Jack saw Jack smiling", a lollipop on a tree)
 
 Samples:
@@ -181,8 +192,29 @@ Findings:
 > One day, the boat saw a big boat. The boat wanted to sail on the water. The boat sailed on the water. The boat was happy.
 > The boat saw a little fish. The fish sailed on the boat. The boat was happy. The boat sailed on the water. The fish sailed on the water. The boat was not sad anymore.
 
+## Run 5: BPE tokenizer, 9.0M params
+
+- Tokenizer: `ByteLevelBPETokenizer` trained on the train file, `vocab_size=10_000`, special token `<|endoftext|>`; files pre-encoded to `uint16` `.bin`, read with `np.memmap`
+- Config: `vocab 10000, context 512, n_embd 256, n_head 4, n_layer 8, n_ff 1024` (~9.0M params: 6.3M transformer, 2.56M tied embedding, 0.13M position)
+- Weight tying: `linear.weight = embed.weight`, re-initialized with std 0.02. Without the re-init, step-0 loss was ~160 and the model repeated `<|endoftext|>`; with it, 9.23 ≈ ln(10000)
+- Data: full train file (539M tokens ≈ 2.2B chars), ~1.5 epochs; val = full valid file (5.4M tokens), loss averaged over 20 batches
+- LR: warmup 1000 steps to 1e-3, cosine to 1e-4
+- Val loss: 4.65 (1k) → 2.28 (10k) → 1.81 (20k) → 1.64 (30k) → 1.56 (40k) → 1.51 (50k) → 1.47 (60k) → 1.45 (70k) → 1.43 (80k) → **1.405 (89k, best)** → 1.43 (100k)
+- Plateau from ~75k; train ≈ val throughout (capacity-limited, no overfitting)
+- vs run 4: **~15% lower loss per char** (0.34 vs 0.40) with fewer params and a smaller transformer (6.3M vs 11M)
+- Checkpoints: `best.pt` (step 89k), `gpt_final.pt` (step 100k)
+- Observation: grammar clean; errors are logic and entity mix-ups ("the ball wanted to play with the ball", Sue speaking as the cactus), plus repetition ("forgive and forgive")
+
+Sample (step 99,999):
+
+> One day, a little boy named Tim went for a walk. He saw a green plant that looked like a cactus. The cactus was green and spiky. Tim was not scared of the cactus.
+> He saw a girl named Sue. Sue was playing with the cactus too. They were having fun. But then the cactus moved! Tim and Sue were scared. Sue said, "Don't be scared, Tim. I am a cactus. I live in the cactus. I am a nice cactus."
+> Tim and Sue were happy. They played with the cactus every day. They had a lot of fun. The cactus made them feel brave. And they became good friends.
+
+Sampling (two stories per setting): T 0.8 with top_p 0.7–0.9 gave the most coherent stories; top_k 5 at T 1.0 looped the most ("They hope… They hope…").
+
 ## Ideas not tried yet
 
 - Story-aligned windows (start each window at a story start) + keep only stories ≤ 1024 chars (88% of stories, 78% of chars)
-- BPE tokenizer (~4× more story per context, no spelling to learn)
-- Bigger model, best combined with BPE
+- Wider BPE model: `n_embd 384, n_head 6, n_ff 1536` (run 5 is capacity-limited)
+- Shorter run or higher LR floor: run 5 gained little after step ~75k
