@@ -2,10 +2,18 @@
 
 All runs: pre-LN transformer, AdamW, final LayerNorm, no dropout.
 Runs 1–4 use char-level tokens; loss is cross-entropy per **char** (nats).
-Runs 5–6 use a byte-level BPE tokenizer; loss is per **token**, about 4.14 chars each.
+Runs 5–7 use a byte-level BPE tokenizer; loss is per **token**, about 4.14 chars each.
 Samples drawn at temperature 1.0 unless noted.
 
 ## Best story so far
+
+Run 7 `best.pt`, temperature 1.0, top_k 5:
+
+> One day, a little boy named Tim found a big, hard rock. He thought it was fun to play with the rock. He would roll the rock around and watch it go. Tim saw a girl named Sue. Sue was sad because she had a terrible face.
+> Tim said, "Hi, I'm Tim. Why are you sad?" Sue said, "I lost my toy. It was under a rock, and I can't find it." Tim wanted to help Sue. They looked for Sue's toy together. They looked under rocks and behind rocks, but they could not find Sue's toy.
+> Suddenly, Tim had an idea. He found a small box under a tree. He opened the box and saw Sue's toy! Sue was so happy. She said, "Thank you, Tim!" They played with the toy all day and became best friends.
+
+Setup → problem → search that ties back to the rock → solution → happy end, with dialogue and consistent characters. One slip: "she had a terrible face".
 
 Run 6 `best.pt`, temperature 0.8, top_k 10:
 
@@ -39,6 +47,7 @@ Best char-level story, run 4 `best.pt`, temperature 0.8, top_p 0.7:
 | 4 | 11.5M | 8 × 384 × 8 | 1024 | 16 | train file, first 1B chars, filtered | 100k | **~0.40** (step 95k, from memory); final ~0.42 | ~10 h (~0.36 s/step) |
 | 5 | 9.0M | 8 × 256 × 4, BPE 10k, tied | 512 tokens | 16 | full train file, 539M tokens | 100k | **1.405 / token ≈ 0.34 / char** (step 89k); final 1.43 | 7.0 h (~0.25 s/step) |
 | 6 | 18.2M | 8 × 384 × 6, BPE 10k, tied | 512 tokens | 32 | full train file, 539M tokens | 100k | **1.340 / token ≈ 0.324 / char** (step 93k); final 1.37 | 12.5 h (~0.45 s/step) |
+| 7 | 25.3M | 12 × 384 × 6, BPE 10k, tied, bf16 | 512 tokens | 32 | full train file, 539M tokens | 100k | **1.307 / token ≈ 0.316 / char** (step 90k); final 1.31 | 5.9 h (~0.21 s/step) |
 
 ## Run 1: small model, valid file only
 
@@ -231,7 +240,7 @@ Sampling (two stories per setting): T 0.8 with top_p 0.7–0.9 gave the most coh
 - Averages over 10 evals (val noise ±0.02): 70–79k ~1.380, 80–89k ~1.369, 90–100k ~1.359. Plateau; continuing would gain ~0.01–0.03
 - Train ≈ val throughout, even at 3 epochs: still capacity-limited
 - vs run 5: −0.065 per token (−0.016 per char) for 2× params
-- Checkpoint: `best.pt` (step 93k)
+- Checkpoint: `best.pt` (step 93k), in git at `b17cdac`
 
 ### Run 6 `best.pt`: sampling
 
@@ -252,8 +261,39 @@ Findings:
 - T 0.8 + top_p 0.7, the best char-level setting, is too strict for BPE and loops. Default now: **T 0.8, top_k 10 or top_p 0.9**.
 - Most common error: endings that contradict the story (thanking Mom "for helping me catch the bug" after it flew away).
 
+## Run 7: deeper BPE model, 25.3M params, bf16
+
+- Config: `vocab 10000, context 512, n_embd 384, n_head 6, n_layer 12, n_ff 1536` (~25.3M params)
+- bf16 autocast for the training and validation forward passes: 1.49 → 0.25 s/step in a benchmark, 5.6 → 4.2 GiB; no GradScaler needed
+- Same batch, tokenizer, data, weight tying and LR schedule as run 6 (~3.0 epochs)
+- Val loss: 2.01 (10k) → 1.59 (20k) → 1.49 (30k) → 1.41 (40k) → 1.37 (50k) → 1.34 (60k) → 1.32 (70k) → 1.34 (80k) → **1.307 (90k, best)** → 1.31 (100k)
+- Averages over 10 evals: 71–80k ~1.332, 81–90k ~1.314, 91–100k ~1.321. Plateau from ~80k
+- Train ≈ val throughout: still capacity-limited
+- vs run 6: −0.04 per token (−0.01 per char) on the averages, in less than half the time
+- Checkpoint: `best.pt` (step 90k)
+
+### Run 7 `best.pt`: sampling
+
+Two stories per setting, via `run_gpt.py`.
+
+| Temperature | Sampling | Result |
+|---|---|---|
+| 1.0 | **top_k 5** | **best**: clean, full arcs (see "Best story so far"); the stones story repeats "big, round stone" |
+| 1.0 | top_k 10 | coherent; hide-and-seek swaps roles ("Max, you count!"), the old-man story goes nowhere |
+| 1.0 | top_p 0.9 | long; loops ("He does not know…") and swaps animals (bird / bee / dog) |
+| 1.0 | top_p 0.7 | clean and simple (the beach, Tim's cooler) |
+| 0.8 | top_k 5 | fluent; the park-ranger story ends in a contradiction ("wish they had not been brave") |
+| 0.8 | top_k 10 | good (Tom and Sue build a house of blocks); the necklace story loops and mixes up Lily and Ben |
+| 0.8 | top_p 0.9 | short and flat; odd logic (feeding a bug makes it "a good snack") |
+| 0.8 | top_p 0.7 | worst: loops ("She told them they were brave and good" ×3); one clean short story (Mr. Bear) |
+
+Findings:
+- Top-k 5–10 stays the best choice with BPE. A stronger model also handles T 1.0 well.
+- T 0.8 + top_p 0.7 loops again, as in run 6.
+- Fewer word-level slips than run 6. The main errors are still logic: role swaps, endings that contradict the story.
+
 ## Ideas not tried yet
 
 - Story-aligned windows (start each window at a story start) + keep only stories ≤ 1024 chars (88% of stories, 78% of chars)
-- Deeper BPE model: `n_layer 12` at n_embd 384 (~25M params); depth may help coherence more than width
-- Shorter run or higher LR floor: runs 5 and 6 gained little after step ~75k
+- Use the bf16 speedup for a bigger model: n_embd 512, n_head 8, n_layer 12 (~42M params)
+- Shorter run or higher LR floor: runs 5–7 gained little after step ~75–80k
