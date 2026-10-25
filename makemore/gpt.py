@@ -13,7 +13,7 @@ class GPTConfig:
   context: int = 512
   n_embd: int = 384
   n_head: int = 6
-  n_layer: int = 8
+  n_layer: int = 12
   n_ff_size: int = 1536
   dropout: float = 0.1
 
@@ -170,8 +170,9 @@ def train(batch_size: int, config: GPTConfig, device: str, max_steps: int,
   last_saved_loss = 10000.0
   for step in range(max_steps):
     xb, yb = tokenizer.get_batch("train", config.context, batch_size, device)
-    logits = model(xb)  # [B,T,V]
-    loss = F.cross_entropy(logits.view(-1, tokenizer.vocab_size), yb.view(-1))
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+      logits = model(xb)  # [B,T,V]
+      loss = F.cross_entropy(logits.view(-1, tokenizer.vocab_size), yb.view(-1))
     opt.zero_grad()
     loss.backward()
     opt.step()
@@ -198,8 +199,9 @@ def calc_val_loss(batch_size: int, config: GPTConfig, device: str, model: GPT,
   losses = []
   for _ in range(n):
     xv, yv = tokenizer.get_batch("val", config.context, batch_size, device)
-    logits = model(xv)
-    losses.append(F.cross_entropy(logits.view(-1, tokenizer.vocab_size), yv.view(-1)).item())
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+      logits = model(xv)
+      losses.append(F.cross_entropy(logits.view(-1, tokenizer.vocab_size), yv.view(-1)).item())
   model.train()
   return sum(losses) / n
 
