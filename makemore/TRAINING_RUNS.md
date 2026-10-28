@@ -270,7 +270,7 @@ Findings:
 - Averages over 10 evals: 71–80k ~1.332, 81–90k ~1.314, 91–100k ~1.321. Plateau from ~80k
 - Train ≈ val throughout: still capacity-limited
 - vs run 6: −0.04 per token (−0.01 per char) on the averages, in less than half the time
-- Checkpoint: `best.pt` (step 90k)
+- Checkpoint: `best.pt` (step 90k), in git at `bf3c8e3`
 
 ### Run 7 `best.pt`: sampling
 
