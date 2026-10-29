@@ -173,8 +173,8 @@ def main() :
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     config = ckpt["config"]
 
-  batcher = BatchProvider("C:\\dev\\tutorials\\LLM2\\gpt\\makemore\\data\\TinyStoriesV2-GPT4-train.bin",
-                        "C:\\dev\\tutorials\\LLM2\\gpt\\makemore\\data\\TinyStoriesV2-GPT4-valid.bin", config.context, batch_size, device)
+  batcher = BatchProvider("data/TinyStoriesV2-GPT4-train.bin",
+                        "data/TinyStoriesV2-GPT4-valid.bin", config.context, batch_size, device)
   print(f"{config=}")
 
   model = GPT(config).to(device)
