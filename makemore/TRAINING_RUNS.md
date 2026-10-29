@@ -2,10 +2,26 @@
 
 All runs: pre-LN transformer, AdamW, final LayerNorm, no dropout.
 Runs 1–4 use char-level tokens; loss is cross-entropy per **char** (nats).
-Runs 5–7 use a byte-level BPE tokenizer; loss is per **token**, about 4.14 chars each.
+Runs 5–8 use a byte-level BPE tokenizer; loss is per **token**, about 4.14 chars each.
 Samples drawn at temperature 1.0 unless noted.
 
 ## Best story so far
+
+Run 8 `best.pt`, temperature 1.0, top_k 5:
+
+> One day, a little boy named Tim went to play outside. He saw a big tree with a hole in it. Tim was very curious, and wanted to see what was inside. He looked into the hole and saw something shiny.
+> Tim wanted to find out what the shiny thing was. He thought it might have a special power to make things better. He tried to lift a big rock, but it was too heavy. He tried to shake it, but it was too strong. Tim felt sad that he could not make things good.
+> Then, Tim had an idea. He found a long stick and used it to lift the shiny thing out of the hole. The shiny thing was now a beautiful necklace! Tim was so happy that he danced around and played with his new treasure. The shiny things made his day even more fun.
+
+Curiosity → failed tries → own idea (the stick) → treasure. The hero solves the problem himself, no contradictions. One slip: the "big rock" has nothing to do with the plot.
+
+Run 8 `best.pt`, temperature 1.0, top_p 0.9:
+
+> Once upon a time, there was a big, healthy bull. He lived on a farm with many animals. The bull was very strong and fast. He had a lot of friends on the farm.
+> One day, the bull was playing with his friend, a little bird. They were running and flying. Suddenly, the bull slipped on a rock. The little bird helped the bull get up. They both laughed and continued to play.
+> After playing, they went to the farmer's house. The farmer was happy to see them. He gave them a big pot of soup. The bull and the little bird ate the soup together. They were happy and full. The end.
+
+No errors at all, but a flat plot.
 
 Run 7 `best.pt`, temperature 1.0, top_k 5:
 
@@ -48,6 +64,7 @@ Best char-level story, run 4 `best.pt`, temperature 0.8, top_p 0.7:
 | 5 | 9.0M | 8 × 256 × 4, BPE 10k, tied | 512 tokens | 16 | full train file, 539M tokens | 100k | **1.405 / token ≈ 0.34 / char** (step 89k); final 1.43 | 7.0 h (~0.25 s/step) |
 | 6 | 18.2M | 8 × 384 × 6, BPE 10k, tied | 512 tokens | 32 | full train file, 539M tokens | 100k | **1.340 / token ≈ 0.324 / char** (step 93k); final 1.37 | 12.5 h (~0.45 s/step) |
 | 7 | 25.3M | 12 × 384 × 6, BPE 10k, tied, bf16 | 512 tokens | 32 | full train file, 539M tokens | 100k | **1.307 / token ≈ 0.316 / char** (step 90k); final 1.31 | 5.9 h (~0.21 s/step) |
+| 8 | 25.3M | as run 7 + GELU, story masking | 512 tokens | 32 | full train file, 539M tokens | 100k | **1.1785 / token ≈ 0.285 / char** (step 98k); final 1.1785 | 6.7 h (~0.24 s/step) |
 
 ## Run 1: small model, valid file only
 
@@ -292,8 +309,43 @@ Findings:
 - T 0.8 + top_p 0.7 loops again, as in run 6.
 - Fewer word-level slips than run 6. The main errors are still logic: role swaps, endings that contradict the story.
 
+## Run 8: story masking, GELU, cosine to 0, 25.3M params
+
+- Config: same as run 7 (`vocab 10000, context 512, n_embd 384, n_head 6, n_layer 12, n_ff 1536`, ~25.3M params, bf16)
+- Story masking: attention stays inside one story. Each token sees only earlier tokens after the last `<|endoftext|>` in the window (`attn_mask` instead of `is_causal`)
+- ReLU → GELU in the feed-forward
+- Cosine LR to 0 (was 1e-4)
+- Val set fixed: the first 640 windows of the valid file (20 batches × 32, 328k tokens), same each eval. Runs 5–7 used 20 random batches, so the comparison is close but not exact
+- Paused at step 46k, resumed from `best.pt` with `--proceed` (model, optimizer and scheduler state)
+- Val loss: 1.59 (10k) → 1.42 (20k) → 1.34 (30k) → 1.30 (40k) → 1.26 (50k) → 1.23 (60k) → 1.21 (70k) → 1.19 (80k) → 1.18 (90k) → **1.1785 (98k, best)** → 1.1785 (100k)
+- Averages over 10 evals: 71–80k 1.199, 81–90k 1.185, 91–100k 1.179. No plateau: loss kept falling until LR reached ~0
+- Train (~1.16) ≈ val, ~3.0 epochs: still no overfitting
+- vs run 7: **−0.13 per token (−0.03 per char)** with the same params and data. The biggest gain since the switch to BPE
+- Checkpoint: `best.pt` (step 98k)
+
+### Run 8 `best.pt`: sampling
+
+Two stories per setting, via `run_gpt.py` (one for T 0.8 + top_p 0.7).
+
+| Temperature | Sampling | Result |
+|---|---|---|
+| 1.0 | **top_k 5** | **best**: Tim and the hole in the tree (see "Best story so far"); the other story loops ("shoot the toy like a real toy") |
+| 1.0 | top_k 10 | coherent; role mix-ups (Sam and Mia's puzzles, "flew to the tip of the big bird") |
+| 1.0 | top_p 0.9 | clean: the bull and the bird (see "Best story so far"); Julie mixes up books and toys |
+| 1.0 | top_p 0.7 | coherent; twists that contradict the story ("it was just a toy train") |
+| 0.8 | top_k 5 | fluent; role slip ("I will lift you up, Sam!" while lifting a rock) |
+| 0.8 | top_k 10 | repetitive lists ("lions, monkeys, elephants, and monkeys"); flat plot |
+| 0.8 | top_p 0.9 | most ambitious plot (Lily, the fox and the baby bird), then an endless loop ("You have a big heart" until max length) |
+| 0.8 | top_p 0.7 | clean, simple story with a moral (Tim and the broccoli) |
+
+Findings:
+- Top-k 5 at T 1.0 is the best setting for the third run in a row.
+- New failure: an endless loop with no `<|endoftext|>`. A repetition penalty or an n-gram stop in `generate` would catch it.
+- Remaining errors are logic: role swaps and twists that contradict the story.
+
 ## Ideas not tried yet
 
-- Story-aligned windows (start each window at a story start) + keep only stories ≤ 1024 chars (88% of stories, 78% of chars)
+- Keep only stories ≤ 1024 chars (88% of stories, 78% of chars); story masking from run 8 already stops stories from mixing
 - Use the bf16 speedup for a bigger model: n_embd 512, n_head 8, n_layer 12 (~42M params)
-- Shorter run or higher LR floor: runs 5–7 gained little after step ~75–80k
+- Longer run (200k steps), or a warm restart from run 8 `best.pt` with a new cosine (peak LR ~3e-4, 30–50k steps)
+- Repetition penalty in `generate`
