@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from tokenizers import Tokenizer
 import numpy as np
+import argparse
+
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import SequentialLR
 
 
 @dataclass(frozen=True)
@@ -148,18 +152,47 @@ class BatchProvider:
     return batches
 
 def main() :
+  p = argparse.ArgumentParser(description="Train GPT")
+  p.add_argument("--proceed", action="store_true", help="Proceed training from the saved checkpoint")
+  p.add_argument("-c", "--checkpoint", default="best.pt")
+  args = p.parse_args()
+
   device = "cuda" if torch.cuda.is_available() else "cpu"
+
   print(f"Using device {device}")
 
-  max_steps = 100_000
   batch_size = 32
+  warmup: int = 1000
+  max_steps = 100_000
+
   tokenizer = Tokenizer.from_file("data/tokenizer.json")
   config = GPTConfig(vocab_size=tokenizer.get_vocab_size(with_added_tokens=True))
+  ckpt = None
+
+  if args.proceed:
+    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    config = ckpt["config"]
+
   batcher = BatchProvider("C:\\dev\\tutorials\\LLM2\\gpt\\makemore\\data\\TinyStoriesV2-GPT4-train.bin",
                         "C:\\dev\\tutorials\\LLM2\\gpt\\makemore\\data\\TinyStoriesV2-GPT4-valid.bin", config.context, batch_size, device)
   print(f"{config=}")
+
   model = GPT(config).to(device)
-  train(config, device, max_steps, model, batcher, tokenizer)
+  start_step = 0
+  opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+  last_saved_loss = 10000.0
+  sched = torch.optim.lr_scheduler.SequentialLR(opt, [
+    torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.01, total_iters=warmup),
+    torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps - warmup),
+  ], milestones=[warmup])
+  if args.proceed:
+    model.load_state_dict(ckpt["model"])
+    opt.load_state_dict(ckpt["opt"])
+    sched.load_state_dict(ckpt["sched"])
+    start_step = ckpt["step"] + 1
+    last_saved_loss = ckpt.get("loss", 1.277) #replace default with 10000 after this run
+
+  train(config, device, model, batcher, tokenizer, opt, sched, max_steps, start_step, last_saved_loss)
   torch.save({"model": model.state_dict(), "config": config},"gpt_final.pt")
   model.eval()
   print(sample(model, tokenizer, device, 500))
@@ -174,17 +207,11 @@ def sample(model: GPT, tokenizer: Tokenizer, device: str, length: int) -> str:
   return decode
 
 
-def train(config: GPTConfig, device: str, max_steps: int,
-    model: GPT, batcher: BatchProvider, tokenizer: Tokenizer, warmup: int = 1000):
-  opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
-  sched = torch.optim.lr_scheduler.SequentialLR(opt, [
-    torch.optim.lr_scheduler.LinearLR(opt, start_factor=0.01, total_iters=warmup),
-    torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps - warmup),
-  ], milestones=[warmup])
+def train(config: GPTConfig, device: str, model: GPT, batcher: BatchProvider, tokenizer: Tokenizer,
+    opt: torch.optim.Optimizer, sched: torch.optim.lr_scheduler.SequentialLR, max_steps: int, start_step: int, last_saved_loss: float):
   model.train()
   t0 = time.perf_counter()
-  last_saved_loss = 10000.0
-  for step in range(max_steps):
+  for step in range(start_step, max_steps):
     xb, yb = batcher.get_train_batch()
     with torch.autocast(device_type=device, dtype=torch.bfloat16):
       logits = model(xb)  # [B,T,V]
@@ -202,12 +229,19 @@ def train(config: GPTConfig, device: str, max_steps: int,
       print(sample(model, tokenizer, device, 200))
       if val_loss < last_saved_loss :
         last_saved_loss = val_loss
-        start = time.perf_counter()
-        torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
-                    "sched": sched.state_dict(), "step": step,
-                    "config": config}, "best.pt")
-        took = time.perf_counter() - start
-        print(f"Saved best in {took*1000:.0f} ms. Loss = {val_loss}")
+        save_best_checkpoint(config, model, opt, sched, step, val_loss)
+
+
+def save_best_checkpoint(config: GPTConfig, model: GPT, opt: Optimizer,
+    sched: SequentialLR, step: int, val_loss: float):
+  try:
+    torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
+              "sched": sched.state_dict(), "step": step,
+              "config": config, "loss": val_loss}, "best.pt.tmp")
+    os.replace("best.pt.tmp", "best.pt")
+    print(f"Saved best with val_loss = {val_loss}")
+  except Exception as e:
+    print(f"Best Save failed, continuing: {e}")
 
 
 def log_metrics(step: int, lr: float, train_loss: float, val_loss: float):
