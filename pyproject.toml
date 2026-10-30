@@ -1,8 +1,10 @@
 [project]
-name = "gpt"
+name = "baby-stories"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "ipykernel>=7.4.0",
+    "matplotlib>=3.11.2",
     "numpy>=2.5.4",
     "tokenizers>=0.23.3",
     "torch>=2.14.1",

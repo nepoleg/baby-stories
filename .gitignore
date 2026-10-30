@@ -5,3 +5,5 @@ __pycache__/
 data/*.bin
 data/TinyStoriesV2-GPT4-train.txt
 best.pt.tmp
+data/TinyStoriesV2-GPT4-valid.txt
+*.pt
