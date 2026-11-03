@@ -7,6 +7,14 @@ Samples drawn at temperature 1.0 unless noted.
 
 ## Best story so far
 
+Run 8 `best.pt` exported to Hugging Face format (`custom-gpt/`), HF `generate` with beam search, num_beams 4 (`sample.ipynb`):
+
+> Once upon a time, there was a little boy named Tim. Tim loved to play outside with his friends. One day, Tim and his friends went to the park to play.
+> At the park, Tim saw a big tree. He wanted to climb it. His friend, Sam, said, "Be careful, Tim!" Tim started to climb the tree. He went up, up, up, until he was very high.
+> When Tim got to the top, he saw a big bird. The bird said, "Hello, Tim!" Tim was surprised. He did not know birds could talk. The bird told Tim that it was a magic bird. The bird said, "I can make one wish come true for you." Tim thought for a moment and said, "I wish for a big ice cream cone!" The magic bird made a big ice cream cone appear. Tim and his friends were so happy. They all shared the ice cream and had a great day at the park.
+
+The best story so far: "wow". No slips: names, roles and places stay consistent, and every detail is used later (Sam's warning, the climb, the bird at the top). Clear arc with dialogue, and the ending fits the story. Beam search keeps the most probable whole sequence instead of sampling token by token, which removes the logic slips that top-k and top-p still make.
+
 Run 8 `best.pt`, temperature 1.0, top_k 5:
 
 > One day, a little boy named Tim went to play outside. He saw a big tree with a hole in it. Tim was very curious, and wanted to see what was inside. He looked into the hole and saw something shiny.
@@ -342,6 +350,7 @@ Findings:
 - Top-k 5 at T 1.0 is the best setting for the third run in a row.
 - New failure: an endless loop with no `<|endoftext|>`. A repetition penalty or an n-gram stop in `generate` would catch it.
 - Remaining errors are logic: role swaps and twists that contradict the story.
+- Beam search (num_beams 4, via HF `generate` on the exported model) gave the best story of all runs, with no logic slips (see "Best story so far"). It costs one forward pass per beam per step (no KV cache).
 
 ## Ideas not tried yet
 

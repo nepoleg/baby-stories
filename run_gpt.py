@@ -2,7 +2,9 @@ import argparse
 import os
 import torch
 from tokenizers import Tokenizer
-from gpt import GPT, GPTConfig  # GPTConfig must be importable to unpickle the checkpoint
+from babygpt_model.modeling_babygpt import BabyGPT  # GPTConfig must be importable to unpickle the checkpoint
+from babygpt_model.configuration_babygpt import BabyGPTConfig
+
 
 def main():
   parser = argparse.ArgumentParser()
@@ -13,10 +15,10 @@ def main():
 
   device = "cuda" if torch.cuda.is_available() else "cpu"
   ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-  config: GPTConfig = ckpt["config"]
+  config: BabyGPTConfig = ckpt["config"]
   tokenizer = Tokenizer.from_file("data/tokenizer.json")
 
-  model = GPT(config).to(device)
+  model = BabyGPT(config).to(device)
   model.load_state_dict(ckpt["model"])
   model.eval()
   temperature = 1.0
@@ -31,8 +33,6 @@ def main():
     {"temperature": 0.8, "top_k": 0, "top_p": 0.9},
     {"temperature": 0.8, "top_k": 0, "top_p": 0.7},
   ]
-
-
 
   for mode in modes :
     for _ in range(2):
