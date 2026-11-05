@@ -7,7 +7,8 @@ Self-made and home-trained GPT model capable of producing small child stories. I
 
 # Features
 - BPE Tokenizer
-- Transformers with Multi-Head Attention with causual masking and masking based on the star of the story
+- Transformers with Multi-Head Attention 
+- Masking of training data based on the beginning of the story
 - Uses bf16 for training to be able to train on a laptop
 - Resulting checkpoints can be found on my [Hugging Face](https://huggingface.co/nepoleg/baby-stories) 
 
@@ -26,13 +27,9 @@ Self-made and home-trained GPT model capable of producing small child stories. I
 
 # Samples
 
-> One day, a little boy named Tim went to play outside. He saw a big tree with a hole in it. Tim was very curious, and wanted to see what was inside. He looked into the hole and saw something shiny.
-> Tim wanted to find out what the shiny thing was. He thought it might have a special power to make things better. He tried to lift a big rock, but it was too heavy. He tried to shake it, but it was too strong. Tim felt sad that he could not make things good.
-> Then, Tim had an idea. He found a long stick and used it to lift the shiny thing out of the hole. The shiny thing was now a beautiful necklace! Tim was so happy that he danced around and played with his new treasure. The shiny things made his day even more fun.
-
-> Once upon a time, there was a big, healthy bull. He lived on a farm with many animals. The bull was very strong and fast. He had a lot of friends on the farm.
-> One day, the bull was playing with his friend, a little bird. They were running and flying. Suddenly, the bull slipped on a rock. The little bird helped the bull get up. They both laughed and continued to play.
-> After playing, they went to the farmer's house. The farmer was happy to see them. He gave them a big pot of soup. The bull and the little bird ate the soup together. They were happy and full. The end.
+> Once upon a time, there was a little boy named Tim. Tim loved to play outside with his friends. One day, Tim and his friends went to the park to play.
+> At the park, Tim saw a big tree. He wanted to climb it. His friend, Sam, said, "Be careful, Tim!" Tim started to climb the tree. He went up, up, up, until he was very high.
+> When Tim got to the top, he saw a big bird. The bird said, "Hello, Tim!" Tim was surprised. He did not know birds could talk. The bird told Tim that it was a magic bird. The bird said, "I can make one wish come true for you." Tim thought for a moment and said, "I wish for a big ice cream cone!" The magic bird made a big ice cream cone appear. Tim and his friends were so happy. They all shared the ice cream and had a great day at the park.
 
 
 - More samples and evolution history can be found [here](TRAINING_RUNS.md)
