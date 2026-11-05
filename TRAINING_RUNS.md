@@ -353,7 +353,11 @@ Findings:
 - Beam sampling (num_beams 4, do_sample on, via HF `generate` on the exported model) gave the best story of all runs, with no logic slips (see "Best story so far"). It costs one forward pass per beam per step (no KV cache).
 
 ## Ideas not tried yet
-
+- Measure token/s speed
+- use torch.compile
+- use micro-batches
+- use weight-decay
+- use parallel (shall I finally rent a gpu) - DDP
 - Keep only stories ≤ 1024 chars (88% of stories, 78% of chars); story masking from run 8 already stops stories from mixing
 - Use the bf16 speedup for a bigger model: n_embd 512, n_head 8, n_layer 12 (~42M params)
 - Longer run (200k steps), or a warm restart from run 8 `best.pt` with a new cosine (peak LR ~3e-4, 30–50k steps)
