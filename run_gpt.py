@@ -2,10 +2,14 @@ import argparse
 import os
 import torch
 from tokenizers import Tokenizer
-from babygpt_model.modeling_babygpt import BabyGPT  # GPTConfig must be importable to unpickle the checkpoint
+from babygpt_model.modeling_babygpt import BabyGPT
 from babygpt_model.configuration_babygpt import BabyGPTConfig
 
 
+class GPTConfig:
+  """Stand-in for the old config class pickled as __main__.GPTConfig in pre-rename checkpoints."""
+
+@torch.no_grad()
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("prompt", nargs="?", default="")
@@ -15,7 +19,12 @@ def main():
 
   device = "cuda" if torch.cuda.is_available() else "cpu"
   ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-  config: BabyGPTConfig = ckpt["config"]
+  config = ckpt["config"]
+  if isinstance(config, GPTConfig): #old checkpoints saved the whole config object
+    config = BabyGPTConfig(**vars(config))
+  else : # just a dict
+    config  = BabyGPTConfig.from_dict(config)
+
   tokenizer = Tokenizer.from_file("data/tokenizer.json")
 
   model = BabyGPT(config).to(device)

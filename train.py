@@ -13,6 +13,8 @@ from torch.optim.lr_scheduler import SequentialLR
 from babygpt_model.configuration_babygpt import BabyGPTConfig
 from babygpt_model.modeling_babygpt import BabyGPT
 
+METRICS_CSV = "metrics.csv"
+
 
 class BatchProvider:
   VAL_BATCH_N = 20
@@ -46,6 +48,8 @@ class BatchProvider:
         batch = []
     return batches
 
+class GPTConfig:
+  'legacy for compatibility with earlier checkpoints'
 
 
 def main() :
@@ -62,15 +66,24 @@ def main() :
   warmup: int = 1000
   max_steps = 100_000
 
-  tokenizer = Tokenizer.from_file("../data/tokenizer.json")
+  tokenizer = Tokenizer.from_file("data/tokenizer.json")
   config = BabyGPTConfig(vocab_size=tokenizer.get_vocab_size(with_added_tokens=True))
   ckpt = None
 
   if args.proceed:
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    config = ckpt["config"]
+    cfg = ckpt["config"]
+    if isinstance(cfg, GPTConfig): #old checkpoints saved the whole config object
+      config = BabyGPTConfig(**vars(cfg))
+    else : # in newer version it is just a dict
+      config  = BabyGPTConfig.from_dict(cfg)
+  else:
+    if os.path.exists(METRICS_CSV):
+      os.replace(METRICS_CSV, f"metrics_{datetime.now():%Y%m%d_%H%M%S}.csv")
+    with open(METRICS_CSV, "a") as f:
+       f.write("time,step,lr,train_loss,val_loss,tps\n")
 
-  batcher = BatchProvider("../data/TinyStoriesV2-GPT4-train.bin",
+  batcher = BatchProvider("data/TinyStoriesV2-GPT4-train.bin",
                           "data/TinyStoriesV2-GPT4-valid.bin", config.context, batch_size, device)
   print(f"{config=}")
 
@@ -90,7 +103,7 @@ def main() :
     last_saved_loss = ckpt.get("loss", 1.277) #replace default with 10000 after this run
 
   train(config, device, model, batcher, tokenizer, opt, sched, max_steps, start_step, last_saved_loss)
-  torch.save({"model": model.state_dict(), "config": config},"gpt_final.pt")
+  # torch.save({"model": model.state_dict(), "config": config},"gpt_final.pt") # we are saving best already... who cares for the last
   model.eval()
   print(sample(model, tokenizer, device, 500))
 
@@ -107,8 +120,13 @@ def sample(model: BabyGPT, tokenizer: Tokenizer, device: str, length: int) -> st
 def train(config: BabyGPTConfig, device: str, model: BabyGPT, batcher: BatchProvider, tokenizer: Tokenizer,
     opt: torch.optim.Optimizer, sched: torch.optim.lr_scheduler.SequentialLR, max_steps: int, start_step: int, last_saved_loss: float):
   model.train()
-  t0 = time.perf_counter()
+  run_start = time.perf_counter()
   for step in range(start_step, max_steps):
+    is_validation_step =  step % (max_steps // 100) == 0 or step == max_steps - 1
+    if is_validation_step:
+      if device == "cuda":
+        torch.cuda.synchronize()
+      step_start = time.perf_counter()
     xb, yb = batcher.get_train_batch()
     with torch.autocast(device_type=device, dtype=torch.bfloat16):
       logits = model(xb)  # [B,T,V]
@@ -118,11 +136,15 @@ def train(config: BabyGPTConfig, device: str, model: BabyGPT, batcher: BatchProv
     opt.step()
     sched.step()
 
-    if step % (max_steps // 100) == 0 or step == max_steps - 1:
+    if is_validation_step:
+      if device == "cuda": torch.cuda.synchronize()
+      step_end = time.perf_counter()
       val_loss = calc_val_loss(device, model, batcher)
       lr = sched.get_last_lr()[0]
-      log_metrics(step, lr, loss.item(), val_loss)
-      print(f"step {step} [{time.perf_counter() - t0:.0f}s] lr={lr:.2e}: Training loss={loss.item()}, validation loss = {val_loss}")
+      tps = config.context * batcher.batch_size / (step_end - step_start)
+      log_metrics(step, lr, loss.item(), val_loss, tps)
+
+      print(f"step {step} [{time.perf_counter() - run_start:.0f}s] lr={lr:.2e}: Training loss={loss.item()}, validation loss = {val_loss}")
       print(sample(model, tokenizer, device, 200))
       if val_loss < last_saved_loss :
         last_saved_loss = val_loss
@@ -134,19 +156,16 @@ def save_best_checkpoint(config: BabyGPTConfig, model: BabyGPT, opt: Optimizer,
   try:
     torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
                 "sched": sched.state_dict(), "step": step,
-                "config": config, "loss": val_loss}, "best.pt.tmp")
-    os.replace("best.pt.tmp", "../best.pt")
+                "config": config.to_dict(), "loss": val_loss}, "best.pt.tmp")
+    os.replace("best.pt.tmp", "best.pt")
     print(f"Saved best with val_loss = {val_loss}")
   except Exception as e:
     print(f"Best Save failed, continuing: {e}")
 
 
-def log_metrics(step: int, lr: float, train_loss: float, val_loss: float):
-  new = not os.path.exists("../metrics.csv")
-  with open("../metrics.csv", "a") as f:
-    if new:
-      f.write("time,step,lr,train_loss,val_loss\n")
-    f.write(f"{datetime.now().isoformat(timespec='seconds')},{step},{lr:.3e},{train_loss:.4f},{val_loss:.4f}\n")
+def log_metrics(step: int, lr: float, train_loss: float, val_loss: float, tps: float):
+  with open(METRICS_CSV, "a") as f:
+    f.write(f"{datetime.now().isoformat(timespec='seconds')},{step},{lr:.3e},{train_loss:.4f},{val_loss:.4f},{tps:.4f}\n")
 
 
 @torch.no_grad()
