@@ -40,7 +40,9 @@ class BabyGPT(nn.Module):
   def generate(self, idx, max_new_tokens, stop=None, temperature = 1.0, top_k = 0, top_p = 0.0): #idx [B, T]
     assert idx.shape[0] == 1 #only uses non-batched 0 dimension.
     for _ in range(max_new_tokens):
-      logits: torch.Tensor = self(idx[:, -self.config.context:])[0, -1] # [V]
+      with torch.autocast(device_type=idx.device.type, dtype=torch.bfloat16): # to save model recompilation on sampling during training
+        logits = self(idx[:, -self.config.context:])[0, -1].float() # [V]
+
       if top_k > 0:
         low_k = logits.sort(dim=-1, descending=True).indices[top_k:]
         logits[low_k] = -torch.inf

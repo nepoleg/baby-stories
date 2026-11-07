@@ -88,6 +88,9 @@ def main() :
   print(f"{config=}")
 
   model = BabyGPT(config).to(device)
+  torch._logging.set_logs(graph_breaks=True, recompiles=True)
+  model.compile()
+
   start_step = 0
   opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
   last_saved_loss = 10000.0
@@ -122,7 +125,7 @@ def train(config: BabyGPTConfig, device: str, model: BabyGPT, batcher: BatchProv
   model.train()
   run_start = time.perf_counter()
   for step in range(start_step, max_steps):
-    is_validation_step =  step % (max_steps // 100) == 0 or step == max_steps - 1
+    is_validation_step =  step % 100 == 0 or step == max_steps - 1
     if is_validation_step:
       if device == "cuda":
         torch.cuda.synchronize()

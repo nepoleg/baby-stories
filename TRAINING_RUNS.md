@@ -353,7 +353,6 @@ Findings:
 - Beam sampling (num_beams 4, do_sample on, via HF `generate` on the exported model) gave the best story of all runs, with no logic slips (see "Best story so far"). It costs one forward pass per beam per step (no KV cache).
 
 ## Ideas not tried yet
-- Measure token/s speed
 - use torch.compile
 - use micro-batches
 - use weight-decay

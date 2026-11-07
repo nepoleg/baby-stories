@@ -9,6 +9,7 @@ dependencies = [
     "tokenizers>=0.23.3",
     "torch>=2.14.1",
     "transformers>=5.22.1",
+    "triton-windows>=3.9.0.post30",
 ]
 
 [tool.uv]
