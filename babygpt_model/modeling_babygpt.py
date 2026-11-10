@@ -61,13 +61,16 @@ class BabyGPT(nn.Module):
     return mask
 
   @torch.no_grad()
-  def generate(self, idx:torch.Tensor, max_new_tokens, stop=None, temperature = 1.0, top_k = 0, top_p = 0.0): #idx [B, T]
+  def generate(self, idx:torch.Tensor, max_new_tokens, stop=None, temperature = 1.0, top_k = 0, top_p = 0.0, use_cache = False): #idx [B, T]
+    """Samples up to max_new_tokens after idx. With use_cache=False the whole sequence is re-run every step,
+    sliding over the last `context` tokens, so it can generate past the context length."""
     assert idx.shape[0] == 1 #only uses non-batched 0 dimension.
     self.reset()
     result = idx
     for _ in range(max_new_tokens):
+      model_in = idx if use_cache else result[:, -self.config.context:]
       with torch.autocast(device_type=idx.device.type, dtype=torch.bfloat16): # to save model recompilation on sampling during training
-        logits = self(idx[:, -self.config.context:], use_cache=True)[0, -1].float() # [V]
+        logits = self(model_in, use_cache=use_cache)[0, -1].float() # [V]
 
       if top_k > 0:
         low_k = logits.sort(dim=-1, descending=True).indices[top_k:]

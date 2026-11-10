@@ -352,6 +352,24 @@ Findings:
 - Remaining errors are logic: role swaps and twists that contradict the story.
 - Beam sampling (num_beams 4, do_sample on, via HF `generate` on the exported model) gave the best story of all runs, with no logic slips (see "Best story so far"). It costs one forward pass per beam per step (no KV cache).
 
+## Inference: KV cache
+
+- Limit: prompt + generated ≤ context (512). Past that the cache raises an error; the uncached path keeps sliding
+- `sample()` in `train.py` runs under `torch.compiler.set_stance("force_eager")`: the growing `cache_size` would trigger a recompile every step (after 8, Dynamo falls back to eager anyway). `torch.compiler.disable` does not help: the model was compiled explicitly and still compiles inside it
+
+### Performance metrics
+
+| Setup | No cache, tok/s | KV cache, tok/s | Speedup | ms/token, first 50 → last 50 |
+|---|---|---|---|---|
+| GPU, bf16 (as `generate` runs) | 123 | 95 | **0.8×** | no cache 9.0 → 7.3, cache 9.5 → 11.2 |
+| GPU, fp32 | 156 | 133 | **0.9×** | no cache 6.3 → 8.4, cache 6.7 → 10.0 |
+| CPU, fp32, 250 tokens | 36 | 93 | **2.6×** | no cache 13.7 → 44.0, cache 9.2 → 10.9 |
+
+Findings:
+- On the GPU, batch 1 is launch-bound: 6–9 ms per step at any length, while a full 512-token forward is only ~1–2 ms of GPU work (estimate). The cache saves work that was hidden anyway and adds its own ops (cache writes, the full `[S, S]` mask every step), so it is slightly slower
+- On the CPU (compute-bound) it gives the textbook result: flat ~10 ms per token, against 44 ms per token without the cache at 250 tokens
+- To pay off on the GPU: CUDA graphs with a static cache, larger batches (many sequences or beams), or a bigger model. Cheap fix: build only the last T rows of the mask instead of the full one
+
 ## Ideas not tried yet
 - use torch.compile
 - use micro-batches
