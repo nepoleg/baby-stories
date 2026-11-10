@@ -361,3 +361,21 @@ Findings:
 - Use the bf16 speedup for a bigger model: n_embd 512, n_head 8, n_layer 12 (~42M params)
 - Longer run (200k steps), or a warm restart from run 8 `best.pt` with a new cosine (peak LR ~3e-4, 30–50k steps)
 - Repetition penalty in `generate`
+
+
+# Next steps (in other repos):
+
+→ RoPE
+→ RMSNorm
+→ SwiGLU
+→ build mini-LLaMA
+→ GQA
+→ LoRA
+→ QLoRA
+→ DPO
+→ GRPO
+→ FlashAttention
+→ PagedAttention/vLLM
+→ speculative decoding
+→ quantization
+→ CUDA/Triton kernels

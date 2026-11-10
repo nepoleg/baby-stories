@@ -64,7 +64,7 @@ def main() :
 
   batch_size = 32
   warmup: int = 1000
-  max_steps = 100_000
+  max_steps = 30
 
   tokenizer = Tokenizer.from_file("data/tokenizer.json")
   config = BabyGPTConfig(vocab_size=tokenizer.get_vocab_size(with_added_tokens=True))
@@ -112,6 +112,7 @@ def main() :
 
 
 @torch.no_grad()
+@torch.compiler.set_stance("force_eager") #otherwise Dynamo will recompile the model on every samling because of the growing cache_size
 def sample(model: BabyGPT, tokenizer: Tokenizer, device: str, length: int) -> str:
   model.eval()
   start = torch.tensor([tokenizer.encode("<|endoftext|>").ids], device=device)

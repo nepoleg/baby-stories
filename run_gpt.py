@@ -13,7 +13,7 @@ class GPTConfig:
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument("prompt", nargs="?", default="")
-  parser.add_argument("-n", "--max-length", type=int, default=5000)
+  parser.add_argument("-n", "--max-length", type=int, default=511) #1 token saved for eot
   parser.add_argument("-c", "--checkpoint", default=os.path.join(os.path.dirname(__file__), "best.pt"))
   args = parser.parse_args()
 
